@@ -5,6 +5,7 @@ pipeline {
   environment {
     APP_ENV = 'test'
     GREETING = 'Hello'
+    VENV = "${WORKSPACE}/.venv"
   }
 
   stages {
@@ -19,13 +20,11 @@ pipeline {
       steps {
         sh '''
           set -eux
-          if ! command -v python3 >/dev/null 2>&1; then
-            echo "Python3 is required on this Jenkins node." >&2
-            exit 1
-          fi
-          python3 -V
-          python3 -m pip install --upgrade pip
-          python3 -m pip install -r requirements.txt
+          # create / reuse virtualenv (requires python3-venv installed on the node/container)
+          python3 -m venv "$VENV"
+          "$VENV/bin/python" -V
+          "$VENV/bin/python" -m pip install --upgrade pip
+          "$VENV/bin/python" -m pip install -r requirements.txt
           echo "$GREETING from ${APP_ENV} environment"
         '''
       }
@@ -34,10 +33,23 @@ pipeline {
     stage('Parallel checks') {
       parallel {
         stage('Unit tests') {
-          steps { sh 'python3 -m pytest -q --junitxml=reports/unit.xml' }
+          steps {
+            sh '''
+              set -eux
+              mkdir -p reports
+              "$VENV/bin/python" -m pytest -q --junitxml=reports/unit.xml
+            '''
+          }
         }
         stage('Lint (demo)') {
-          steps { sh 'python3 - <<EOF\nprint("lint ok (demo)")\nEOF' }
+          steps {
+            sh '''
+              set -eux
+              "$VENV/bin/python" - <<'PY'
+print("lint ok (demo)")
+PY
+            '''
+          }
         }
       }
     }
@@ -45,8 +57,9 @@ pipeline {
     stage('Package') {
       steps {
         sh '''
+          set -eux
           mkdir -p dist
-          python3 - <<'PY'
+          "$VENV/bin/python" - <<'PY'
 import zipfile
 zf = zipfile.ZipFile('dist/app.zip','w')
 zf.write('app.py')
