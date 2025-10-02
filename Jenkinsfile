@@ -2,71 +2,73 @@ pipeline {
   agent any
   options { timestamps() }
 
-  // Using environment variables
   environment {
     APP_ENV = 'test'
     GREETING = 'Hello'
   }
 
   stages {
-    // Create your first Pipeline (checkout)
     stage('Checkout') {
       steps {
         checkout scm
-        echo "Repo checked out. Build #${env.BUILD_NUMBER} on branch ${env.BRANCH_NAME ?: 'N/A'}"
+        echo "Repo checked out. Build #${env.BUILD_NUMBER}"
       }
     }
 
-    // Run multiple steps (sequential)
     stage('Install dependencies') {
       steps {
-        bat 'python --version'
-        bat 'python -m pip install --upgrade pip'
-        bat 'python -m pip install -r requirements.txt'
-        bat 'echo %GREETING% from %APP_ENV% environment'
+        sh '''
+          set -eux
+          if ! command -v python3 >/dev/null 2>&1; then
+            echo "Python3 is required on this Jenkins node." >&2
+            exit 1
+          fi
+          python3 -V
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+          echo "$GREETING from ${APP_ENV} environment"
+        '''
       }
     }
 
-    // Run multiple steps (parallel)
     stage('Parallel checks') {
       parallel {
         stage('Unit tests') {
-          steps {
-            bat 'python -m pytest -q --junitxml=reports\\unit.xml'
-          }
+          steps { sh 'python3 -m pytest -q --junitxml=reports/unit.xml' }
         }
         stage('Lint (demo)') {
-          steps {
-            bat 'python -c "print(\'lint ok (demo)\')"'
-          }
+          steps { sh 'python3 - <<EOF\nprint("lint ok (demo)")\nEOF' }
         }
       }
     }
 
-    // Recording artifacts
     stage('Package') {
       steps {
-        // Make dist and zip app.py using PowerShell's Compress-Archive
-        bat 'if not exist dist mkdir dist'
-        powershell 'Compress-Archive -Path app.py -DestinationPath dist/app.zip -Force'
+        sh '''
+          mkdir -p dist
+          python3 - <<'PY'
+import zipfile
+zf = zipfile.ZipFile('dist/app.zip','w')
+zf.write('app.py')
+zf.close()
+PY
+        '''
       }
     }
 
-    // Deployment (manual gate)
     stage('Deploy to staging') {
       when { branch 'main' }
       steps {
         input message: 'Proceed with deployment to staging?'
-        bat 'echo Pretend deploy: copying dist\\app.zip to staging...'
+        sh 'echo "Pretend deploy: copying dist/app.zip to staging..."'
       }
     }
   }
 
-  // Cleaning up and notifications
   post {
     always {
-      junit 'reports\\*.xml'
-      archiveArtifacts artifacts: 'dist\\**\\*.zip', fingerprint: true
+      junit 'reports/*.xml'
+      archiveArtifacts artifacts: 'dist/**/*.zip', fingerprint: true
       echo 'Cleaning workspace...'
       deleteDir()
     }
